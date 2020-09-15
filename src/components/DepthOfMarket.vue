@@ -74,6 +74,7 @@
 
         let binance = new Binance(data ,5);
         let askBid = binance.getDepth();
+
         /*this.arrayBid =askBid.bids;
         this.arrayAsk=askBid.asks;*/
       })

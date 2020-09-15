@@ -7,7 +7,9 @@ const ws_url = 'wss://stream.binance.com:9443/ws/';
 let  _limit = 500;
 let _symbol = null;
 let _self = null;
-
+let thisLastUpdateId=null;
+let firstProcessedEvent = null;
+let previousEvent__u=null;
 
 class Binance extends EventEmitter {
   constructor(symbol, limit) {
@@ -18,11 +20,12 @@ class Binance extends EventEmitter {
       _limit = limit;
     _symbol = symbol;
     _self = this;
+    firstProcessedEvent = null;
     let ws_params = `${_symbol.toLowerCase()}@depth@1000ms`;
     let ws = new WebSocket(ws_url + ws_params);
     //console.log(ws_url + ws_params);
 
-    ws.addEventListener('message',/*(data)=>{console.log(data)}*/this.updateDepth);
+    ws.addEventListener('message',this.manageOrderBook);
     ws.addEventListener('open', ()=>{console.log('HELLO WS')});
     ws.addEventListener('close', ()=>{console.log('BYE')});
     ws.addEventListener('error', (data)=>{console.log(data)});
@@ -41,42 +44,47 @@ class Binance extends EventEmitter {
         }
       });
     //Сортировка не требуется, т.к. элементы массивов в ответах сохраняют свой порядок
-
+    thisLastUpdateId=result.data.lastUpdateId;
     return {
-      asks: result.data.asks,
-      bids: result.data.bids,
+      lastUpdateId:result.data.lastUpdateId
+      /*asks: result.data.asks,
+      bids: result.data.bids,*/
     }
   }
+  manageOrderBook(data){
+    _self.getDepth();
+    console.log(thisLastUpdateId);
+    let arrayData= JSON.parse(data.data);
+    if(Number(arrayData.u)>(Number(thisLastUpdateId))) {
+      if (firstProcessedEvent === 1) {
+         if((Number(arrayData.U)) === (Number(previousEvent__u)+1)) {
+            _self.updateDepth(arrayData);
+          }
+      } else {
+        if (arrayData.u <= (Number(thisLastUpdateId) + 1) || arrayData.u >= (Number(thisLastUpdateId) + 1)) {
+          firstProcessedEvent = 1;
+          _self.updateDepth(arrayData);
+        }
+      }
+    }
 
-  updateDepth(data) {
 
-    let lastUpdateId;
+  }
 
+  updateDepth(arrayData) {
 
-    axios({
-      method: 'get',
-      url: 'https://www.binance.com/api/v1/depth?symbol='+_symbol+'&limit=1000',
-      responseType: 'text'
-    })
-      .then(function (response) {
-        response=> alert (response.data.lastUpdateId)
-      });
-/*
-    axios.get('https://www.binance.com/api/v1/depth?symbol='+_symbol+'&limit=1000')
-      .then(response => alert(response.data))*/
-
-    if(Number(data.data.u)>(Number(lastUpdateId))){
-      let arrayData= JSON.parse(data.data);
-      let bids = arrayData.b;
-      let asks = arrayData.a;
-      bids = bids.filter(array=>(array[0]&&array[1] >0.0));
-      asks = asks.filter(array=>(array[0]&&array[1] >0.0));
-      let asksBids = [[asks],[bids]];
-      console.log(asksBids);
-      bus.$emit('depthUpdated', asksBids);
-      _self.emit('depthUpdated', asksBids);}
-   // alert('updchetadep');
-
+   // console.log(data.data);
+   // console.log(thisLastUpdateId);
+    previousEvent__u= arrayData.u;
+        let bids = arrayData.b;
+        let asks = arrayData.a;
+        bids = bids.filter(array=>(array[0]&&array[1] >0.0));
+        asks = asks.filter(array=>(array[0]&&array[1] >0.0));
+        let asksBids = [[asks],[bids]];
+        //console.log(asksBids);
+        bus.$emit('depthUpdated', asksBids);
+        _self.emit('depthUpdated', asksBids);
+      // alert('updchetadep');}
 
   }
 
