@@ -9,7 +9,7 @@
 </template>
 
 
-<style >
+<style  >
 #app {
   font-family: italic;
   -webkit-font-smoothing: antialiased;
@@ -23,6 +23,9 @@
     font-weight:bold;
     color: rgba(0, 0, 0, 0.7);
   }
+
+</style>
+<style scoped>
   a{
     font-family: italic;
     text-decoration: none;
