@@ -1,15 +1,34 @@
-import { bus } from './eventBus'
+import {bus} from './eventBus'
+
 const axios = require('axios');
 const EventEmitter = require("events");
-
 const base_endpoint_url = 'https://api.binance.com/';
 const ws_url = 'wss://stream.binance.com:9443/ws/';
-let  _limit = 500;
+let _limit = 500;
 let _symbol = null;
 let _self = null;
-let thisLastUpdateId=null;
 let firstProcessedEvent = null;
-let previousEvent__u=null;
+let previousEvent__u = null;
+
+function depthComparator(left, right) {
+  if (left[0] < right[0]) {
+    return -1;
+  }
+  if (right[0] < left[0]) {
+    return 1;
+  }
+  return 0;
+}
+
+function depthComparatorInverse(left, right) {
+  if (left[0] > right[0]) {
+    return -1;
+  }
+  if (right[0] > left[0]) {
+    return 1;
+  }
+  return 0;
+}
 
 class Binance extends EventEmitter {
   constructor(symbol, limit) {
@@ -21,19 +40,26 @@ class Binance extends EventEmitter {
     _symbol = symbol;
     _self = this;
     firstProcessedEvent = null;
+    let thisLastUpdateId = null;
+    let asks = [];
+    let bids = [];
     let ws_params = `${_symbol.toLowerCase()}@depth@1000ms`;
     let ws = new WebSocket(ws_url + ws_params);
-    //console.log(ws_url + ws_params);
+    this.getDepth();
 
-    ws.addEventListener('message',this.manageOrderBook);
-    ws.addEventListener('open', ()=>{console.log('HELLO WS')});
-    ws.addEventListener('close', ()=>{console.log('BYE')});
-    ws.addEventListener('error', (data)=>{console.log(data)});
+    ws.addEventListener('message', this.manageOrderBook);
+    ws.addEventListener('open', () => {
+      console.log('HELLO WS')
+    });
+    ws.addEventListener('close', () => {
+      console.log('BYE')
+    });
+    ws.addEventListener('error', (data) => {
+      console.log(data)
+    });
 
   }
 
-  //Получение биржевого стакана по определенному символу
-  //https://github.com/binance-exchange/binance-official-api-docs/blob/master/rest-api.md#market-data-endpoints - docs
   async getDepth() {
     let result = await axios.get(
       base_endpoint_url + 'api/v3/depth',
@@ -43,61 +69,74 @@ class Binance extends EventEmitter {
           limit: _limit
         }
       });
-    //Сортировка не требуется, т.к. элементы массивов в ответах сохраняют свой порядок
-    thisLastUpdateId=result.data.lastUpdateId;
-    return {
-      lastUpdateId:result.data.lastUpdateId
-      /*asks: result.data.asks,
-      bids: result.data.bids,*/
-    }
+
+    _self.thisLastUpdateId = result.data.lastUpdateId;
+    _self.asks = result.data.asks;
+    _self.bids = result.data.bids;
+
   }
-  manageOrderBook(data){
-    _self.getDepth();
-    console.log(thisLastUpdateId);
-    let arrayData= JSON.parse(data.data);
-    if(Number(arrayData.u)>(Number(thisLastUpdateId))) {
+
+  manageOrderBook(data) {
+    let arrayData = JSON.parse(data.data);
+    if (Number(arrayData.u) > (Number(_self.thisLastUpdateId))) {
       if (firstProcessedEvent === 1) {
-         if((Number(arrayData.U)) === (Number(previousEvent__u)+1)) {
-            _self.updateDepth(arrayData);
-          }
+        if ((Number(arrayData.U)) === (Number(previousEvent__u) + 1)) {
+          _self.updateDepth(arrayData);
+        }
       } else {
-        if (arrayData.u <= (Number(thisLastUpdateId) + 1) || arrayData.u >= (Number(thisLastUpdateId) + 1)) {
+        if (arrayData.U <= (Number(_self.thisLastUpdateId) + 1) || arrayData.u >= (Number(_self.thisLastUpdateId) + 1)) {
           firstProcessedEvent = 1;
           _self.updateDepth(arrayData);
         }
       }
     }
-
-
   }
 
   updateDepth(arrayData) {
+    console.log(_self.bids);
+    console.log(arrayData.b);
 
-   // console.log(data.data);
-   // console.log(thisLastUpdateId);
-    previousEvent__u= arrayData.u;
-        let bids = arrayData.b;
-        let asks = arrayData.a;
-        bids = bids.filter(array=>(array[0]&&array[1] >0.0));
-        asks = asks.filter(array=>(array[0]&&array[1] >0.0));
-        let asksBids = [[asks],[bids]];
-        //console.log(asksBids);
-        bus.$emit('depthUpdated', asksBids);
-        _self.emit('depthUpdated', asksBids);
-      // alert('updchetadep');}
+    previousEvent__u = arrayData.u;
+    let changeBids = arrayData.b;
+    let changeAsks = arrayData.a;
+    let thisNotMatchElementAsks = [].concat(changeAsks);
+    let thisNotMatchElementBids = [].concat(changeBids);
+
+    function conversionAsksBids(value, change, thisNotMatchElement) {
+
+      value = value.map(function callback(currentValue) {
+        let thisMatchElement = change.filter((element, index) => {
+          if (element[0] === currentValue[0]) {
+            delete thisNotMatchElement[index];
+            return true;
+          }
+          return false;
+        });
+
+        if (thisMatchElement.length > 0) {
+          return (thisMatchElement[0]);
+        } else {
+          return currentValue;
+        }
+      });
+      thisNotMatchElement = thisNotMatchElement.filter(value => ((!!value) && (value[0] && value[1] > 0.0)));
+      value = value.filter(array => (array[0] && array[1] > 0.0));
+      value = value.concat(thisNotMatchElement).slice(0, _limit);
+      console.log(value);
+      console.log(thisNotMatchElement);
+      return value;
+    }
+
+    _self.asks = conversionAsksBids(_self.asks, changeAsks, thisNotMatchElementAsks).sort(depthComparator);
+    _self.bids = conversionAsksBids(_self.bids, changeBids, thisNotMatchElementBids).sort(depthComparatorInverse);
+
+    let asksBids = [[_self.bids], [_self.asks]];
+    bus.$emit('depthUpdated', asksBids);
 
   }
 
-/*  f() {
-    console.log('TEST111');
-  }
-
-  onDepthUpdate(cb) {
-    this.on('depthUpdated', cb);
-  }*/
-
-  getAvailableSymbols() {
-    return [
+  static getAvailableSymbols() {
+    let arraySymbols = [
       'BTCUSDT',
       'ETHUSDT',
       'XRPUSDT',
@@ -105,7 +144,10 @@ class Binance extends EventEmitter {
       'LTCUSDT',
       'BNBBTC',
       'ETHBTC'
-    ]
+    ];
+    return arraySymbols;
   }
+
 }
+
 export default Binance;
